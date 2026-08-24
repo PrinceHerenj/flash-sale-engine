@@ -8,24 +8,28 @@ public class OrderWorker : BackgroundService
 {
     private readonly ILogger<OrderWorker> _logger;
     private readonly ConsumerConfig _consumerConfig;
-    private readonly string _connectionString = "Host=localhost;Port=5432:Database=orders_db;Username=engine_user;Password=engine_password;";
+    private readonly IProducer<string, string> _dlqProducer;
+    private readonly string _connectionString = "Host=localhost;Port=5432;Database=orders_db;Username=engine_user;Password=engine_password;";
 
     public OrderWorker(ILogger<OrderWorker> logger)
     {
         _logger = logger;
         _consumerConfig = new ConsumerConfig
         {
-            BootstapServers = "localhost:9092",
+            BootstrapServers = "localhost:9092",
             GroupId = "order-persistence-group",
-            AutoOffsetRest = AutoOffsetReset.Earliest,
+            AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false
         };
+
+        _dlqProducer = new ProducerBuilder<string, string>(
+            new ProducerConfig { BootstrapServers = "localhost:9092" }).Build();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var consumer = new ConsumerBuilder<string, string>(_consumerConfig).Build();
-        consumer.Subsribe("orders.created");
+        consumer.Subscribe("orders.created");
 
         var batch = new List<(ConsumeResult<string, string> Msg, OrderMessage Order)>();
         var lastFlush = DateTime.UtcNow;
@@ -59,8 +63,8 @@ public class OrderWorker : BackgroundService
         {
             await using var cmd = new NpgsqlCommand(
                 @"INSERT INTO orders (order_id, user_id, product_id, quantity, total_price, status, idempotency_key)
-                VALUES (@order_id, @user_id, @product_id, @quantity, @total_price, 'CONFIRMED', @idempotency_kay)
-                ON CONFLICT (idempotency_key) DO NOTHING;", conn, tx);
+                  VALUES (@order_id, @user_id, @product_id, @quantity, @total_price, 'CONFIRMED', @idempotency_key)
+                  ON CONFLICT (idempotency_key) DO NOTHING;", conn, tx);
 
             foreach (var (_, item) in batch)
             {
@@ -80,8 +84,45 @@ public class OrderWorker : BackgroundService
         catch (Exception ex)
         {
             await tx.RollbackAsync();
-            _logger.LogError(ex, "Failed to persist batch. Excalating to DLQ...");
+            _logger.LogError(ex, "Failed to persist batch. Forwarding {Count} orders to DLQ...", batch.Count);
+            await ForwardBatchToDlqAsync(batch, ex.Message);
         }
+    }
+
+    private async Task ForwardBatchToDlqAsync(
+        List<(ConsumeResult<string, string> Msg, OrderMessage Order)> batch, string failureReason)
+    {
+        foreach (var (msg, order) in batch)
+        {
+            var dlqPayload = new
+            {
+                OriginalMessage = order,
+                FailureReason = failureReason,
+                FailedAt = DateTime.UtcNow,
+                SourcePartition = msg.Partition.Value,
+                SourceOffset = msg.Offset.Value
+            };
+
+            try
+            {
+                await _dlqProducer.ProduceAsync("orders.dlq", new Message<string, string>
+                {
+                    Key = order.ProductId,
+                    Value = JsonSerializer.Serialize(dlqPayload)
+                });
+            }
+            catch (Exception dlqEx)
+            {
+                _logger.LogCritical(dlqEx, "Failed to forward order {OrderId} to DLQ. Manual intervention required.", order.OrderId);
+            }
+        }
+    }
+
+    public override void Dispose()
+    {
+        _dlqProducer.Flush(TimeSpan.FromSeconds(5));
+        _dlqProducer.Dispose();
+        base.Dispose();
     }
 }
 
