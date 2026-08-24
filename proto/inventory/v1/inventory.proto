@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package inventory.v1;
+
+option csharp_namespace = "FlashSale.Common.Protos.Inventory.V1";
+
+service InventoryService {
+    rpc ReserveStock (ReserveStockRequest) returns (ReserveStockResponse);
+    rpc ReleaseStock (ReleaseStockRequest) returns (ReleaseStockResponse);
+}
+
+message ReserveStockRequest {
+    string product_id = 1;
+    int32 quantity = 2;
+    string user_id = 3;
+}
+
+message ReserveStockResponse {
+    bool success = 1;
+    string message = 2;
+    int32 remaining_stock = 3;
+}
+
+message ReleaseStockRequest {
+    string product_id = 1;
+    int32 quantity = 2;
+    string reason = 3;
+}
+
+message ReleaseStockResponse {
+    bool success = 1;
+    int32 updated_stock = 2;
+}
