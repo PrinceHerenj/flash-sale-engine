@@ -44,6 +44,14 @@ lua5.3 -e "loadfile('src/InventoryService/Scripts/release_stock.lua')"
 
 There are no .NET unit tests yet — `tests/` contains only the k6 load test, so `dotnet test` no-ops.
 
+## CI
+
+`.github/workflows/ci.yml` runs two jobs: `build-and-test` (restore → build → `dotnet test` → Lua lint) on every push/PR to `main`, and `load-test` (full Docker stack + k6 burst run) **only on pull requests**. The load test seeds `stock:iphone-16-pro` to 100 before running.
+
+## Status flow
+
+The gateway returns order status `PENDING` (`202 Accepted`), but the worker persists rows with hardcoded `status = 'CONFIRMED'` — there is no intermediate state machine; `PENDING` is only what the API caller sees.
+
 ## Known gotchas
 
 - The `.proto` file is referenced from `Common.Protos.csproj` via a relative `../../../proto` path — the **Dockerfiles and repo-root build context** depend on the `proto/` directory staying at the repo root.
