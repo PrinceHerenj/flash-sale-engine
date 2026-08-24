@@ -4,25 +4,26 @@ using FlashSale.Common.Protos.Inventory.V1;
 
 namespace InventoryService.Services;
 
-public class InventoryGrpcServiceImpl : FlashSale.Common.Protos.Inventory.V1.InvetoryService.InventoryServiceBase
+public class InventoryGrpcServiceImpl : FlashSale.Common.Protos.Inventory.V1.InventoryService.InventoryServiceBase
 {
     private readonly IDatabase _redisDb;
     private readonly string _reserveScript;
     private readonly string _releaseScript;
 
-    public InventoryGrpcServiceImpl(IconnectionMultiplexer redis)
+    public InventoryGrpcServiceImpl(IConnectionMultiplexer redis)
     {
         _redisDb = redis.GetDatabase();
         _reserveScript = File.ReadAllText("Scripts/reserve_stock.lua");
         _releaseScript = File.ReadAllText("Scripts/release_stock.lua");
     }
 
-    public override async Task<ReserveStockResponse> ReserverStock(ReservesStockRequest request, ServerCallContext context)
+    public override async Task<ReserveStockResponse> ReserveStock(ReserveStockRequest request, ServerCallContext context)
     {
         var stockKey = $"stock:{request.ProductId}";
         var result = (RedisValue[]?)await _redisDb.ScriptEvaluateAsync(
-            LuaScript.Prepare(_reserveScript),
-            new { stockKey = (RedisKey)stockKey, quantity = request.Quantity }
+            _reserveScript,
+            new RedisKey[] { (RedisKey)stockKey },
+            new RedisValue[] { request.Quantity }
         );
 
         if (result != null && (int)result[0] == 1)
@@ -46,8 +47,9 @@ public class InventoryGrpcServiceImpl : FlashSale.Common.Protos.Inventory.V1.Inv
     public override async Task<ReleaseStockResponse> ReleaseStock(ReleaseStockRequest request, ServerCallContext context) {
         var stockKey = $"stock:{request.ProductId}";
         var updated = await _redisDb.ScriptEvaluateAsync(
-            LuaScript.Prepare(_releaseScript),
-            new { stockKey = (RedisKey)stockKey, quantity = request.Quantity }
+            _releaseScript,
+            new RedisKey[] { (RedisKey)stockKey },
+            new RedisValue[] { request.Quantity }
         );
 
         return new ReleaseStockResponse

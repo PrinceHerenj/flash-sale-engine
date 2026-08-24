@@ -9,21 +9,25 @@ public class OrderWorker : BackgroundService
     private readonly ILogger<OrderWorker> _logger;
     private readonly ConsumerConfig _consumerConfig;
     private readonly IProducer<string, string> _dlqProducer;
-    private readonly string _connectionString = "Host=localhost;Port=5432;Database=orders_db;Username=engine_user;Password=engine_password;";
+    private readonly string _connectionString;
 
-    public OrderWorker(ILogger<OrderWorker> logger)
+    public OrderWorker(ILogger<OrderWorker> logger, IConfiguration configuration)
     {
         _logger = logger;
+        _connectionString = configuration.GetConnectionString("Orders")
+            ?? "Host=localhost;Port=5432;Database=orders_db;Username=engine_user;Password=engine_password;";
+
+        var kafkaBootstrap = configuration["Kafka:BootstrapServers"] ?? "localhost:9092";
         _consumerConfig = new ConsumerConfig
         {
-            BootstrapServers = "localhost:9092",
+            BootstrapServers = kafkaBootstrap,
             GroupId = "order-persistence-group",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false
         };
 
         _dlqProducer = new ProducerBuilder<string, string>(
-            new ProducerConfig { BootstrapServers = "localhost:9092" }).Build();
+            new ProducerConfig { BootstrapServers = kafkaBootstrap }).Build();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -46,7 +50,7 @@ public class OrderWorker : BackgroundService
             if (batch.Count >= 100 || (DateTime.UtcNow - lastFlush > TimeSpan.FromMilliseconds(100) && batch.Count > 0))
             {
                 await PersistBatchAsync(batch);
-                consumer.Commit(batch.Select(b => b.Msg).Last());
+                consumer.Commit(batch.Select(b => b.Msg.TopicPartitionOffset));
                 batch.Clear();
                 lastFlush = DateTime.UtcNow;
             }
