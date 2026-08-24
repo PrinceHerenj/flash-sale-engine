@@ -16,5 +16,3 @@ TestResults/
 # NuGet
 *.nupkg
 !**/*.nupkg
-
-README.md
