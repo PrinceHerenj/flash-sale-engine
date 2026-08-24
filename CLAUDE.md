@@ -34,7 +34,7 @@ docker compose -f deployments/docker-compose.yml down -v   # teardown
 # Seed test stock
 docker exec flashsale-redis redis-cli SET stock:iphone-16-pro 100
 
-# Load test (5,000 VUs, 99th pct < 25ms threshold; hits the gateway on :5000)
+# Load test (5,000 VUs, 99th pct < 25ms threshold; hits Envoy on :8080)
 k6 run tests/k6/flash-sale-burst.js
 
 # Lint the Lua scripts

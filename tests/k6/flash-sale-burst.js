@@ -17,7 +17,7 @@ export const options = {
 };
 
 export default function () {
-  const url = 'http://localhost:5000/api/v1/orders';
+  const url = 'http://localhost:8080/api/v1/orders';
   const payload = JSON.stringify({
     userId: `user_${__VU}`,
     productId: 'iphone-16-pro',

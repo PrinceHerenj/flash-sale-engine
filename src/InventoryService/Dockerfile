@@ -7,5 +7,4 @@ RUN dotnet publish src/InventoryService/InventoryService.csproj -c Release -o /a
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 COPY --from=build /app/publish .
-ENV ASPNETCORE_URLS=http://+:50051
 ENTRYPOINT ["dotnet", "InventoryService.dll"]

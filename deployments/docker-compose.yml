@@ -23,9 +23,14 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   kafka:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7.1
     container_name: flashsale-kafka
     ports:
       - "9092:9092"
@@ -38,6 +43,25 @@ services:
       - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_KRAFT_CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  kafka-init:
+    image: bitnamilegacy/kafka:3.7.1
+    container_name: flashsale-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.created --partitions 1 --replication-factor 1
+        /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.dlq --partitions 1 --replication-factor 1
+    restart: "no"
 
   inventory-service:
     build:
@@ -49,7 +73,8 @@ services:
     ports:
       - "50051:50051"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
 
   ingress-gateway:
     build:
@@ -60,12 +85,13 @@ services:
       - Redis__ConnectionString=redis:6379
       - InventoryService__GrpcAddress=http://inventory-service:50051
       - Kafka__BootstrapServers=kafka:9092
-    ports:
-      - "5000:5000"
     depends_on:
-      - redis
-      - inventory-service
-      - kafka
+      redis:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
 
   order-worker-fleet:
     build:
@@ -76,8 +102,11 @@ services:
       - ConnectionStrings__Orders=Host=postgres;Port=5432;Database=orders_db;Username=engine_user;Password=engine_password;
       - Kafka__BootstrapServers=kafka:9092
     depends_on:
-      - kafka
-      - postgres
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: on-failure
 
   envoy:
     image: envoyproxy/envoy:v1.30-latest
