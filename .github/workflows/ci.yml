@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependenceis
+        run: dotnet restore flash-sale-engine.sln
+
+      - name: Build
+        run: dotnet build flash-sale-engine.sln --no-restore --configuration Release
+
+      - name: Run unit tests
+        run: dotnet test flash-sale-engine.sln --no-build --configuration Release --verbosity normal
+
+      - name: Lint Lua scripts
+        run: |
+            sudo apt-get install -y lua5.3
+            lua5.3 -e "loadfile('src/InventoryService/Scripts/reserve_stock.lua')"
+            lua5.3 -e "loadfile('src/InventoryService/Scripts/release_stock.lua')"
+
+  load-test:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start stack
+        run: docker compose -f deployments/docker-compose.yml up -d
+
+      - name: Wait for services
+        run: sleep 20
+
+      - name: Seed Inventory
+        run: docker exec flashsale-redis redis-cli SET stock:iphone-16-pro 100
+
+      - name: Install k6
+        run: |
+            sudo gpg -k
+            sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+            echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+            sudo apt-get update
+            sudo apt-get install k6
+
+      - name: Run burst test
+        run: k6 run tests/k6/flash-sale-burst.js
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f deployments/docker-compose.yml down -v
