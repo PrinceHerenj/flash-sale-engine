@@ -16,3 +16,5 @@ TestResults/
 # NuGet
 *.nupkg
 !**/*.nupkg
+
+PROJECT-EXPLANATION.md
